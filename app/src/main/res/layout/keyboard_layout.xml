@@ -1,0 +1,83 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="vertical"
+    android:background="#202125"
+    android:padding="6dp">
+
+    <!-- Main keyboard area with keys -->
+    <GridLayout
+        android:id="@+id/keyboard_container"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:columnCount="10"
+        android:rowCount="3"
+        android:useDefaultMargins="true"
+        android:alignmentMode="alignBounds"
+        android:rowOrderPreserved="true" />
+
+    <!-- Special keys row -->
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:layout_marginTop="6dp">
+
+        <Button
+            android:id="@+id/button_shift"
+            android:layout_width="0dp"
+            android:layout_weight="0.15"
+            android:layout_height="48dp"
+            android:text="⇧"
+            android:textColor="#FFFFFF"
+            android:background="@drawable/special_key_background"
+            android:textSize="20sp"
+            android:layout_marginEnd="4dp" />
+
+        <Button
+            android:id="@+id/button_symbols"
+            android:layout_width="0dp"
+            android:layout_weight="0.15"
+            android:layout_height="48dp"
+            android:text="\?123"
+            android:textColor="#FFFFFF"
+            android:background="@drawable/special_key_background"
+            android:textSize="14sp"
+            android:layout_marginEnd="4dp" />
+
+        <Button
+            android:id="@+id/button_space"
+            android:layout_width="0dp"
+            android:layout_weight="0.5"
+            android:layout_height="48dp"
+            android:text="Space"
+            android:textColor="#FFFFFF"
+            android:background="@drawable/space_key_background"
+            android:textSize="16sp"
+            android:layout_marginEnd="4dp" />
+
+        <Button
+            android:id="@+id/button_enter"
+            android:layout_width="0dp"
+            android:layout_weight="0.15"
+            android:layout_height="48dp"
+            android:text="↵"
+            android:textColor="#FFFFFF"
+            android:background="@drawable/enter_key_background"
+            android:textSize="20sp"
+            android:layout_marginEnd="4dp" />
+
+        <Button
+            android:id="@+id/button_backspace"
+            android:layout_width="0dp"
+            android:layout_weight="0.15"
+            android:layout_height="48dp"
+            android:text="⌫"
+            android:textColor="#FFFFFF"
+            android:background="@drawable/special_key_background"
+            android:textSize="20sp" />
+    </LinearLayout>
+
+</LinearLayout>
