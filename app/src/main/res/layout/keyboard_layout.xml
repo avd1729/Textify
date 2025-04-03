@@ -6,6 +6,49 @@
     android:background="#202125"
     android:padding="6dp">
 
+    <!-- Suggestion bar -->
+    <LinearLayout
+        android:id="@+id/suggestion_bar"
+        android:layout_width="match_parent"
+        android:layout_height="40dp"
+        android:orientation="horizontal"
+        android:background="#2A2B30"
+        android:layout_marginBottom="6dp">
+
+        <Button
+            android:id="@+id/suggestion_1"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="match_parent"
+            android:background="@drawable/suggestion_background"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:layout_margin="2dp"
+            android:visibility="invisible" />
+
+        <Button
+            android:id="@+id/suggestion_2"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="match_parent"
+            android:background="@drawable/suggestion_background"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:layout_margin="2dp"
+            android:visibility="invisible" />
+
+        <Button
+            android:id="@+id/suggestion_3"
+            android:layout_width="0dp"
+            android:layout_weight="1"
+            android:layout_height="match_parent"
+            android:background="@drawable/suggestion_background"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:layout_margin="2dp"
+            android:visibility="invisible" />
+    </LinearLayout>
+
     <!-- Main keyboard area with keys -->
     <GridLayout
         android:id="@+id/keyboard_container"
