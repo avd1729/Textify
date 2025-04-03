@@ -32,7 +32,12 @@ class NextWordPredictor(private val context: Context) {
 
     private fun loadModel() {
         val modelFile = "next_word_model.tflite"
-        interpreter = Interpreter(loadModelFile(context, modelFile))
+
+        // Create interpreter options
+        val options = Interpreter.Options()
+
+        // Load the model with options
+        interpreter = Interpreter(loadModelFile(context, modelFile), options)
     }
 
     private fun loadModelFile(context: Context, modelFile: String): MappedByteBuffer {
