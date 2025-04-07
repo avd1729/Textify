@@ -14,11 +14,15 @@ import kotlin.math.min
 class NextWordPredictor(private val context: Context) {
     private val TAG = "NextWordPredictor"
     private var interpreter: Interpreter? = null
-    private val vocabSize = 10000  // Size of vocabulary - adjust based on your model
+    private var vocabSize = 10000  // Will be updated from actual model
     private val maxSuggestions = 3  // Number of suggestions to provide
     private val vocabMap: MutableMap<String, Int> = HashMap()  // Word to index mapping
     private val indexMap: MutableMap<Int, String> = HashMap()  // Index to word mapping
-    private val inputLength = 5  // Number of previous words to consider
+    private var inputLength = 5  // Will be updated from actual model
+
+    // Model dimensions
+    private var actualInputSize = 0
+    private var actualOutputSize = 0
 
     // User's typing history for local learning
     private val userHistory = mutableListOf<String>()
@@ -27,11 +31,6 @@ class NextWordPredictor(private val context: Context) {
     // Frequency dictionary to track user's most common words
     private val frequencyDict = mutableMapOf<String, Int>()
     private val commonFollowingWords = mutableMapOf<String, MutableMap<String, Int>>()
-
-    // Reusable buffers to reduce allocation
-    private val inputBuffer = ByteBuffer.allocateDirect(inputLength * 4).order(ByteOrder.nativeOrder())
-    private val outputBuffer = ByteBuffer.allocateDirect(vocabSize * 4).order(ByteOrder.nativeOrder())
-    private val results = FloatArray(vocabSize)
 
     // Fallback common words
     private val fallbackWords = listOf(
@@ -61,6 +60,24 @@ class NextWordPredictor(private val context: Context) {
 
             // Load the model with options
             interpreter = Interpreter(loadModelFile(context, modelFile), options)
+
+            // Get model input/output dimensions
+            val inputShape = interpreter?.getInputTensor(0)?.shape() ?: intArrayOf()
+            val outputShape = interpreter?.getOutputTensor(0)?.shape() ?: intArrayOf()
+
+            // Update class fields based on model dimensions
+            if (inputShape.isNotEmpty()) {
+                inputLength = inputShape[1]  // Assuming shape is [batch_size, sequence_length]
+                actualInputSize = inputShape[1]
+                Log.d(TAG, "Model input shape: ${inputShape.joinToString()}, using sequence length: $inputLength")
+            }
+
+            if (outputShape.isNotEmpty()) {
+                vocabSize = outputShape[1]  // Assuming shape is [batch_size, vocab_size]
+                actualOutputSize = outputShape[1]
+                Log.d(TAG, "Model output shape: ${outputShape.joinToString()}, using vocab size: $vocabSize")
+            }
+
             Log.d(TAG, "Model loaded successfully")
         } catch (e: Exception) {
             Log.e(TAG, "Failed to load model: ${e.message}")
@@ -87,6 +104,11 @@ class NextWordPredictor(private val context: Context) {
                         vocabMap[cleanWord] = index
                         indexMap[index] = cleanWord
                         count++
+
+                        // Log sample of vocabulary
+                        if (index < 10 || index % 1000 == 0) {
+                            Log.d(TAG, "Vocab entry $index: $cleanWord")
+                        }
                     }
                 }
             }
@@ -101,8 +123,12 @@ class NextWordPredictor(private val context: Context) {
     }
 
     fun getPredictions(text: String): List<String> {
+        // Preprocess input text
+        val processedText = preprocessText(text)
+        Log.d(TAG, "Processing text for predictions: '$processedText'")
+
         // First try to get predictions from the TF model
-        val modelPredictions = getTFPredictions(text)
+        val modelPredictions = getTFPredictions(processedText)
 
         // Check if model predictions are varied enough
         if (modelPredictions.size >= 2 && !arePredictionsSimilar(modelPredictions)) {
@@ -111,9 +137,16 @@ class NextWordPredictor(private val context: Context) {
         }
 
         // If model predictions are not varied enough, use frequency-based predictions
-        val frequencyPredictions = getFrequencyBasedPredictions(text)
+        val frequencyPredictions = getFrequencyBasedPredictions(processedText)
         Log.d(TAG, "Using frequency-based predictions: $frequencyPredictions")
         return frequencyPredictions
+    }
+
+    private fun preprocessText(text: String): String {
+        return text.lowercase(Locale.getDefault())
+            .replace(Regex("[^\\w\\s]"), " ")
+            .replace(Regex("\\s+"), " ")
+            .trim()
     }
 
     private fun arePredictionsSimilar(predictions: List<String>): Boolean {
@@ -123,51 +156,57 @@ class NextWordPredictor(private val context: Context) {
 
     private fun getTFPredictions(text: String): List<String> {
         try {
-            // Extract last few words for prediction context
-            val words = text.split(" ", "\n", "\t", ".", ",", "!", "?")
-                .filter { it.isNotEmpty() }
-                .takeLast(inputLength)
-                .map { it.lowercase(Locale.getDefault()) }
+            // Extract last few words
+            val words = text.split(" ", "\n", "\t").filter { it.isNotEmpty() }
 
-            if (words.isEmpty()) return emptyList()
+            // Create input
+            val inputBuffer = ByteBuffer.allocateDirect(inputLength * 4).order(ByteOrder.nativeOrder())
 
-            Log.d(TAG, "Input words for model: $words")
+            // Log your input for debugging
+            val wordIndices = mutableListOf<Int>()
 
-            // Record this word in user history for later learning
-            if (words.isNotEmpty()) {
-                addToHistory(words.last())
+            // Fill with zeros first
+            for (i in 0 until inputLength) {
+                inputBuffer.putInt(0)
+                wordIndices.add(0)
             }
 
-            // Clear and prepare input buffer
-            inputBuffer.clear()
-
-            // Add word indices to input buffer (in reverse order)
-            for (i in 0 until inputLength) {
-                val wordIndex = if (i < words.size) {
-                    vocabMap[words[words.size - 1 - i]] ?: 0
-                } else {
-                    0 // Padding for sentences shorter than inputLength
-                }
-                inputBuffer.putInt(wordIndex)
+            // Reset position and add actual words (if any)
+            inputBuffer.rewind()
+            for (i in 0 until min(words.size, inputLength)) {
+                val wordIndex = vocabMap[words[words.size - 1 - i]] ?: 0
+                inputBuffer.putInt(i * 4, wordIndex)  // Direct position write
+                wordIndices[i] = wordIndex
             }
             inputBuffer.rewind()
 
-            // Clear output buffer
-            outputBuffer.clear()
+            Log.d(TAG, "Input word indices: $wordIndices")
+
+            // Create output - make sure it's big enough
+            val outputSize = interpreter?.getOutputTensor(0)?.shape()?.get(1) ?: vocabSize
+            val outputBuffer = ByteBuffer.allocateDirect(outputSize * 4).order(ByteOrder.nativeOrder())
 
             // Run inference
-            interpreter?.run(inputBuffer, outputBuffer) ?: return emptyList()
+            interpreter?.run(inputBuffer, outputBuffer)
 
-            // Process results
+            // Process results - use output size from model
             outputBuffer.rewind()
-            for (i in 0 until vocabSize) {
+            val results = FloatArray(outputSize)
+            for (i in 0 until outputSize) {
                 results[i] = outputBuffer.getFloat()
             }
 
-            // Get top predictions
-            val topPredictions = getTopK(results, maxSuggestions)
-            Log.d(TAG, "TF model predictions: $topPredictions")
-            return topPredictions
+            // Get any non-zero results
+            Log.d(TAG, "Max prediction value: ${results.maxOrNull()}")
+            Log.d(TAG, "Non-zero count: ${results.count { it > 0 }}")
+
+            // Get top predictions with lower threshold
+            return results.withIndex()
+                .sortedByDescending { it.value }
+                .take(maxSuggestions)
+                .filter { it.value > 0.000001f }  // Very low threshold for debugging
+                .mapNotNull { indexMap[it.index] }
+                .also { Log.d(TAG, "Model predictions: $it") }
         } catch (e: Exception) {
             Log.e(TAG, "Error in TF predictions", e)
             return emptyList()
@@ -176,7 +215,7 @@ class NextWordPredictor(private val context: Context) {
 
     private fun getFrequencyBasedPredictions(text: String): List<String> {
         // Extract the last word to predict what might follow it
-        val lastWord = text.split(" ", "\n", "\t", ".", ",", "!", "?")
+        val lastWord = text.split(" ", "\n", "\t")
             .filter { it.isNotEmpty() }
             .lastOrNull()?.lowercase(Locale.getDefault()) ?: ""
 
@@ -212,8 +251,9 @@ class NextWordPredictor(private val context: Context) {
         // Find indices of top k predictions
         val topIndices = predictions.withIndex()
             .sortedByDescending { it.value }
-            .take(k)
+            .take(k * 2)  // Take more than needed to filter
             .filter { it.value > 0.01f } // Filter predictions with very low confidence
+            .take(k)
             .map { it.index }
 
         // Map indices back to words
@@ -221,6 +261,8 @@ class NextWordPredictor(private val context: Context) {
             val word = indexMap[it]
             if (word != null) {
                 Log.d(TAG, "Prediction: $word (${predictions[it]})")
+            } else {
+                Log.d(TAG, "No word found for index $it")
             }
             word
         }
