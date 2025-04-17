@@ -1,12 +1,21 @@
 package com.example.keyboard.ml
 
 import android.content.Context
+import android.hardware.usb.UsbDevice.getDeviceId
 import android.util.Log
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
 import com.chaquo.python.android.AndroidPlatform
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.MultipartBody
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody.Companion.asRequestBody
 import java.io.File
 import java.util.*
+import java.util.concurrent.TimeUnit
 
 class NextWordPredictor(private val context: Context) {
     private val TAG = "NextWordPredictor"
@@ -70,6 +79,91 @@ class NextWordPredictor(private val context: Context) {
             Log.e(TAG, "Error in initializePython", e)
             throw e  // Re-throw to ensure initialization failure is properly handled
         }
+    }
+
+    /**
+     * Uploads the model to the Flask backend server
+     * @param serverUrl The base URL of the Flask server
+     * @return Success status of the upload
+     */
+    suspend fun uploadModelToServer(serverUrl: String): Boolean {
+        // First export the model to the app's files directory
+        val exportPath = exportModel(context.filesDir.absolutePath + "/export_model.pkl")
+        if (exportPath == null) {
+            Log.e(TAG, "Failed to export model for upload")
+            return false
+        }
+
+        return withContext(Dispatchers.IO) {
+            try {
+                val file = File(exportPath)
+                if (!file.exists()) {
+                    Log.e(TAG, "Export file does not exist: $exportPath")
+                    return@withContext false
+                }
+
+                Log.d(TAG, "Uploading model file, size: ${file.length()} bytes")
+
+                // Create OkHttp client with extended timeouts for large files
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .writeTimeout(60, TimeUnit.SECONDS)
+                    .readTimeout(60, TimeUnit.SECONDS)
+                    .build()
+
+                // Create multipart request body with the file
+                val requestBody = MultipartBody.Builder()
+                    .setType(MultipartBody.FORM)
+                    .addFormDataPart(
+                        "model_file",
+                        file.name,
+                        file.asRequestBody("application/octet-stream".toMediaTypeOrNull())
+                    )
+                    // Add device ID or user info if needed
+                    .addFormDataPart("device_id", getDeviceId())
+                    .build()
+
+                // Build the request
+                val request = Request.Builder()
+                    .url("$serverUrl/upload_model")
+                    .post(requestBody)
+                    .build()
+
+                // Execute the request
+                val response = client.newCall(request).execute()
+                val success = response.isSuccessful
+
+                if (success) {
+                    Log.d(TAG, "Model upload successful: ${response.body?.string()}")
+                } else {
+                    Log.e(TAG, "Model upload failed: ${response.code} - ${response.body?.string()}")
+                }
+
+                // Clean up the exported file after upload
+                file.delete()
+
+                return@withContext success
+            } catch (e: Exception) {
+                Log.e(TAG, "Error uploading model", e)
+                return@withContext false
+            }
+        }
+    }
+
+    /**
+     * Gets a unique device ID for the model upload
+     * You might want to use a more persistent ID in a real app
+     */
+    private fun getDeviceId(): String {
+        val prefs = context.getSharedPreferences("keyboard_prefs", Context.MODE_PRIVATE)
+        var deviceId = prefs.getString("device_id", null)
+
+        if (deviceId == null) {
+            deviceId = UUID.randomUUID().toString()
+            prefs.edit().putString("device_id", deviceId).apply()
+        }
+
+        return deviceId
     }
 
     fun getPredictions(text: String): List<String> {

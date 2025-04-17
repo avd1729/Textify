@@ -128,11 +128,22 @@ class KeyboardPredictor:
         Export model for server aggregation
         This could be enhanced with additional metadata in a real implementation
         """
-        if not export_path:
-            export_path = "keyboard_model_export.pkl"
-
-        print(f"Exporting model for aggregation to {export_path}")
         try:
+            # If no path provided, use the app's files directory from self.model_path
+            if not export_path:
+                # Extract the directory from the existing model_path
+                base_dir = os.path.dirname(self.model_path)
+                export_path = os.path.join(base_dir, "keyboard_model_export.pkl")
+
+            print(f"Exporting model for aggregation to {export_path}")
+
+            # Ensure directory exists
+            export_dir = os.path.dirname(export_path)
+            if export_dir and not os.path.exists(export_dir):
+                print(f"Creating export directory: {export_dir}")
+                os.makedirs(export_dir, exist_ok=True)
+
+            # Save the model
             self.model.save(export_path)
 
             if os.path.exists(export_path):

@@ -29,9 +29,8 @@ android {
             defaultConfig {
                 version = "3.11"
                 pip {
-                    install("numpy")
-                    install("pandas")
-                    // Add other packages as needed
+//                    install("numpy")
+//                    install("pandas")
                 }
             }
         }
@@ -85,7 +84,6 @@ dependencies {
     androidTestImplementation(libs.androidx.ui.test.junit4)
     debugImplementation(libs.androidx.ui.tooling)
     debugImplementation(libs.androidx.ui.test.manifest)
-
-    implementation("org.tensorflow:tensorflow-lite:2.9.0")
-    implementation("org.tensorflow:tensorflow-lite-select-tf-ops:2.9.0")
+    implementation("com.squareup.okhttp3:okhttp:4.10.0")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.6.4")
 }

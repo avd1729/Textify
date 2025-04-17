@@ -15,6 +15,9 @@ import com.chaquo.python.android.AndroidPlatform
 import com.example.keyboard.KeyboardActivity
 import com.example.keyboard.R
 import com.example.keyboard.ml.NextWordPredictor
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 class SecureKeyboardService : InputMethodService() {
     private val TAG = "SecureKeyboardService"
@@ -52,6 +55,16 @@ class SecureKeyboardService : InputMethodService() {
             Log.e(TAG, "Error initializing predictor", e)
             // Try to launch the activity to initialize Python
             launchInitActivity()
+        }
+
+        val serverUrl = "https://zyphor-fl.onrender.com"   // Replace with your actual server URL
+        CoroutineScope(Dispatchers.Main).launch {
+            val success = predictor.uploadModelToServer(serverUrl)
+            if (success) {
+                Log.d(TAG, "Model upload successful")
+            } else {
+                Log.e(TAG, "Model upload failed")
+            }
         }
     }
 
