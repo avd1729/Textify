@@ -2,325 +2,149 @@ package com.example.keyboard.ml
 
 import android.content.Context
 import android.util.Log
-import org.tensorflow.lite.Interpreter
-import java.io.FileInputStream
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.nio.MappedByteBuffer
-import java.nio.channels.FileChannel
+import com.chaquo.python.PyObject
+import com.chaquo.python.Python
+import com.chaquo.python.android.AndroidPlatform
+import java.io.File
 import java.util.*
-import kotlin.math.min
 
 class NextWordPredictor(private val context: Context) {
     private val TAG = "NextWordPredictor"
-    private var interpreter: Interpreter? = null
-    private var vocabSize = 10000  // Will be updated from actual model
+    private var predictor: PyObject? = null
     private val maxSuggestions = 3  // Number of suggestions to provide
-    private val vocabMap: MutableMap<String, Int> = HashMap()  // Word to index mapping
-    private val indexMap: MutableMap<Int, String> = HashMap()  // Index to word mapping
-    private var inputLength = 5  // Will be updated from actual model
 
-    // Model dimensions
-    private var actualInputSize = 0
-    private var actualOutputSize = 0
-
-    // User's typing history for local learning
-    private val userHistory = mutableListOf<String>()
-    private val historyLimit = 1000  // Limit history size
-
-    // Frequency dictionary to track user's most common words
-    private val frequencyDict = mutableMapOf<String, Int>()
-    private val commonFollowingWords = mutableMapOf<String, MutableMap<String, Int>>()
-
-    // Fallback common words
+    // Fallback common words for emergency cases
     private val fallbackWords = listOf(
         "the", "and", "to", "a", "of", "is", "in", "that", "it", "was",
-        "for", "on", "with", "he", "as", "you", "do", "at", "this", "but",
-        "his", "by", "from", "they", "we", "say", "her", "she", "or", "an",
-        "will", "my", "all", "would", "there", "their", "what", "so", "up", "if"
+        "for", "on", "with", "he", "as", "you", "do", "at", "this", "but"
     )
 
     init {
         try {
-            loadModel()
-            loadVocabulary()
-            Log.d(TAG, "Initialization complete. Vocabulary loaded: ${vocabMap.size} words")
+            initializePython()
+            Log.d(TAG, "Python predictor initialization complete")
         } catch (e: Exception) {
-            Log.e(TAG, "Error during initialization", e)
+            Log.e(TAG, "Error during Python predictor initialization", e)
         }
     }
 
-    private fun loadModel() {
-        val modelFile = "next_word_model.tflite"
+    private fun initializePython() {
         try {
-            // Create interpreter options
-            val options = Interpreter.Options().apply {
-                setNumThreads(2)
+            // Make sure Python is started
+            if (!Python.isStarted()) {
+                Python.start(AndroidPlatform(context))
             }
 
-            // Load the model with options
-            interpreter = Interpreter(loadModelFile(context, modelFile), options)
+            // Now get the Python instance
+            val py = Python.getInstance()
 
-            // Get model input/output dimensions
-            val inputShape = interpreter?.getInputTensor(0)?.shape() ?: intArrayOf()
-            val outputShape = interpreter?.getOutputTensor(0)?.shape() ?: intArrayOf()
+            // Get application's files directory for model storage
+            val filesDir = context.filesDir.absolutePath
+            val modelPath = "$filesDir/keyboard_model.pkl"
 
-            // Update class fields based on model dimensions
-            if (inputShape.isNotEmpty()) {
-                inputLength = inputShape[1]  // Assuming shape is [batch_size, sequence_length]
-                actualInputSize = inputShape[1]
-                Log.d(TAG, "Model input shape: ${inputShape.joinToString()}, using sequence length: $inputLength")
-            }
+            // Check if we have sample texts to initialize the model
+            val assetManager = context.assets
+            val sampleTexts = mutableListOf<String>()
 
-            if (outputShape.isNotEmpty()) {
-                vocabSize = outputShape[1]  // Assuming shape is [batch_size, vocab_size]
-                actualOutputSize = outputShape[1]
-                Log.d(TAG, "Model output shape: ${outputShape.joinToString()}, using vocab size: $vocabSize")
-            }
-
-            Log.d(TAG, "Model loaded successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to load model: ${e.message}")
-            throw e
-        }
-    }
-
-    private fun loadModelFile(context: Context, modelFile: String): MappedByteBuffer {
-        val fileDescriptor = context.assets.openFd(modelFile)
-        val inputStream = FileInputStream(fileDescriptor.fileDescriptor)
-        val fileChannel = inputStream.channel
-        val startOffset = fileDescriptor.startOffset
-        val declaredLength = fileDescriptor.declaredLength
-        return fileChannel.map(FileChannel.MapMode.READ_ONLY, startOffset, declaredLength)
-    }
-
-    private fun loadVocabulary() {
-        try {
-            var count = 0
-            context.assets.open("vocabulary.txt").bufferedReader().useLines { lines ->
-                lines.forEachIndexed { index, word ->
-                    val cleanWord = word.trim()
-                    if (cleanWord.isNotEmpty()) {
-                        vocabMap[cleanWord] = index
-                        indexMap[index] = cleanWord
-                        count++
-
-                        // Log sample of vocabulary
-                        if (index < 10 || index % 1000 == 0) {
-                            Log.d(TAG, "Vocab entry $index: $cleanWord")
-                        }
-                    }
+            try {
+                // Load sample texts from assets if available
+                assetManager.list("sample_texts")?.forEach { fileName ->
+                    val text = assetManager.open("sample_texts/$fileName").bufferedReader().use { it.readText() }
+                    sampleTexts.add(text)
                 }
+            } catch (e: Exception) {
+                Log.w(TAG, "Could not load sample texts: ${e.message}")
             }
-            Log.d(TAG, "Loaded $count words from vocabulary")
 
-            // Initialize frequency dictionary with common words
-            fallbackWords.forEach { frequencyDict[it] = 1 }
+            // Create KeyboardPredictor instance
+            val module = py.getModule("keyboard_predictor")
+            predictor = module.callAttr(
+                "KeyboardPredictor",
+                modelPath,
+                3,  // n-gram size
+                if (sampleTexts.isNotEmpty()) sampleTexts.toTypedArray() else null
+            )
+
+            Log.d(TAG, "Python predictor created with model path: $modelPath")
         } catch (e: Exception) {
-            Log.e(TAG, "Error loading vocabulary", e)
-            throw e
+            Log.e(TAG, "Error in initializePython", e)
+            throw e  // Re-throw to ensure initialization failure is properly handled
         }
     }
 
     fun getPredictions(text: String): List<String> {
-        // Preprocess input text
         val processedText = preprocessText(text)
         Log.d(TAG, "Processing text for predictions: '$processedText'")
 
-        // First try to get predictions from the TF model
-        val modelPredictions = getTFPredictions(processedText)
+        try {
+            // Call the Python predict method
+            val predictions = predictor?.callAttr("predict", processedText, maxSuggestions)
 
-        // Check if model predictions are varied enough
-        if (modelPredictions.size >= 2 && !arePredictionsSimilar(modelPredictions)) {
-            Log.d(TAG, "Using model predictions: $modelPredictions")
-            return modelPredictions
+            if (predictions != null) {
+                // Convert Python list of (word, probability) tuples to Kotlin list of words
+                val result = mutableListOf<String>()
+                val size = predictions.asList().size
+
+                for (i in 0 until size) {
+                    val tuple = predictions.asList()[i]
+                    val word = tuple.asList()[0].toString()
+                    result.add(word)
+                }
+
+                Log.d(TAG, "Python model predictions: $result")
+                return result
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting predictions from Python model", e)
         }
 
-        // If model predictions are not varied enough, use frequency-based predictions
-        val frequencyPredictions = getFrequencyBasedPredictions(processedText)
-        Log.d(TAG, "Using frequency-based predictions: $frequencyPredictions")
-        return frequencyPredictions
+        // Fallback to common words if prediction fails
+        return fallbackWords.shuffled().take(maxSuggestions)
     }
 
     private fun preprocessText(text: String): String {
         return text.lowercase(Locale.getDefault())
-            .replace(Regex("[^\\w\\s]"), " ")
+            .replace(Regex("[^\\w\\s']"), " ")
             .replace(Regex("\\s+"), " ")
             .trim()
     }
 
-    private fun arePredictionsSimilar(predictions: List<String>): Boolean {
-        // Consider predictions too similar if there are fewer than 2 distinct words
-        return predictions.distinct().size < 2
-    }
-
-    private fun getTFPredictions(text: String): List<String> {
+    fun addToHistory(text: String) {
         try {
-            // Extract last few words
-            val words = text.split(" ", "\n", "\t").filter { it.isNotEmpty() }
-
-            // Create input
-            val inputBuffer = ByteBuffer.allocateDirect(inputLength * 4).order(ByteOrder.nativeOrder())
-
-            // Log your input for debugging
-            val wordIndices = mutableListOf<Int>()
-
-            // Fill with zeros first
-            for (i in 0 until inputLength) {
-                inputBuffer.putInt(0)
-                wordIndices.add(0)
-            }
-
-            // Reset position and add actual words (if any)
-            inputBuffer.rewind()
-            for (i in 0 until min(words.size, inputLength)) {
-                val wordIndex = vocabMap[words[words.size - 1 - i]] ?: 0
-                inputBuffer.putInt(i * 4, wordIndex)  // Direct position write
-                wordIndices[i] = wordIndex
-            }
-            inputBuffer.rewind()
-
-            Log.d(TAG, "Input word indices: $wordIndices")
-
-            // Create output - make sure it's big enough
-            val outputSize = interpreter?.getOutputTensor(0)?.shape()?.get(1) ?: vocabSize
-            val outputBuffer = ByteBuffer.allocateDirect(outputSize * 4).order(ByteOrder.nativeOrder())
-
-            // Run inference
-            interpreter?.run(inputBuffer, outputBuffer)
-
-            // Process results - use output size from model
-            outputBuffer.rewind()
-            val results = FloatArray(outputSize)
-            for (i in 0 until outputSize) {
-                results[i] = outputBuffer.getFloat()
-            }
-
-            // Get any non-zero results
-            Log.d(TAG, "Max prediction value: ${results.maxOrNull()}")
-            Log.d(TAG, "Non-zero count: ${results.count { it > 0 }}")
-
-            // Get top predictions with lower threshold
-            return results.withIndex()
-                .sortedByDescending { it.value }
-                .take(maxSuggestions)
-                .filter { it.value > 0.000001f }  // Very low threshold for debugging
-                .mapNotNull { indexMap[it.index] }
-                .also { Log.d(TAG, "Model predictions: $it") }
+            predictor?.callAttr("add_to_history", text)
+            Log.d(TAG, "Added text to history: $text")
         } catch (e: Exception) {
-            Log.e(TAG, "Error in TF predictions", e)
-            return emptyList()
+            Log.e(TAG, "Error adding text to history", e)
         }
     }
 
-    private fun getFrequencyBasedPredictions(text: String): List<String> {
-        // Extract the last word to predict what might follow it
-        val lastWord = text.split(" ", "\n", "\t")
-            .filter { it.isNotEmpty() }
-            .lastOrNull()?.lowercase(Locale.getDefault()) ?: ""
-
-        // Try to get words that commonly follow the last word
-        if (lastWord.isNotEmpty() && commonFollowingWords.containsKey(lastWord)) {
-            val followingWords = commonFollowingWords[lastWord]?.entries
-                ?.sortedByDescending { it.value }
-                ?.take(maxSuggestions)
-                ?.map { it.key }
-
-            if (!followingWords.isNullOrEmpty() && followingWords.size >= min(2, maxSuggestions)) {
-                return followingWords
-            }
-        }
-
-        // Fall back to most frequent overall words
-        val frequentWords = frequencyDict.entries
-            .sortedByDescending { it.value }
-            .take(maxSuggestions * 2)
-            .map { it.key }
-            .shuffled()
-            .take(maxSuggestions)
-
-        if (frequentWords.isNotEmpty()) {
-            return frequentWords
-        }
-
-        // Ultimate fallback - static common words
-        return fallbackWords.shuffled().take(maxSuggestions)
-    }
-
-    private fun getTopK(predictions: FloatArray, k: Int): List<String> {
-        // Find indices of top k predictions
-        val topIndices = predictions.withIndex()
-            .sortedByDescending { it.value }
-            .take(k * 2)  // Take more than needed to filter
-            .filter { it.value > 0.01f } // Filter predictions with very low confidence
-            .take(k)
-            .map { it.index }
-
-        // Map indices back to words
-        val words = topIndices.mapNotNull {
-            val word = indexMap[it]
-            if (word != null) {
-                Log.d(TAG, "Prediction: $word (${predictions[it]})")
-            } else {
-                Log.d(TAG, "No word found for index $it")
-            }
-            word
-        }
-
-        return words
-    }
-
-    private fun addToHistory(word: String) {
-        if (word.length < 2) return // Skip very short words
-
-        // Add to user history
-        userHistory.add(word)
-        if (userHistory.size > historyLimit) {
-            userHistory.removeAt(0)
-        }
-
-        // Update frequency dictionary
-        frequencyDict[word] = (frequencyDict[word] ?: 0) + 1
-
-        // Update following words map
-        if (userHistory.size >= 2) {
-            val previousWord = userHistory[userHistory.size - 2]
-            val followingWordsForPrevious = commonFollowingWords.getOrPut(previousWord) { mutableMapOf() }
-            followingWordsForPrevious[word] = (followingWordsForPrevious[word] ?: 0) + 1
-        }
-    }
-
-    // Method to update the model with local user data
     fun updateLocalModel() {
         try {
-            // Save frequency data
-            Log.d(TAG, "Local model would be updated with ${userHistory.size} history items")
-            Log.d(TAG, "Frequency dictionary contains ${frequencyDict.size} words")
-            Log.d(TAG, "Contextual following words map contains ${commonFollowingWords.size} contexts")
-
-            // In a real implementation, you would:
-            // 1. Convert user history to training examples
-            // 2. Perform fine-tuning on the existing model
-            // 3. Save the updated model
+            predictor?.callAttr("train_on_history")
+            Log.d(TAG, "Updated local model with user history")
         } catch (e: Exception) {
             Log.e(TAG, "Error updating local model", e)
         }
     }
 
-    // Get user's most frequent words for debugging
-    fun getTopUserWords(count: Int = 10): List<Pair<String, Int>> {
-        return frequencyDict.entries
-            .sortedByDescending { it.value }
-            .take(count)
-            .map { it.key to it.value }
+    fun exportModel(exportPath: String? = null): String? {
+        try {
+            val path = predictor?.callAttr("export_for_aggregation", exportPath)?.toString()
+            Log.d(TAG, "Exported model to: $path")
+            return path
+        } catch (e: Exception) {
+            Log.e(TAG, "Error exporting model", e)
+            return null
+        }
     }
 
     fun close() {
         try {
-            interpreter?.close()
-            Log.d(TAG, "Interpreter closed successfully")
+            // Save the model before closing
+            predictor?.callAttr("save_model")
+            Log.d(TAG, "Model saved before closing")
         } catch (e: Exception) {
-            Log.e(TAG, "Error closing interpreter", e)
+            Log.e(TAG, "Error closing Python predictor", e)
         }
     }
 }

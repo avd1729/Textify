@@ -1,15 +1,18 @@
 package com.example.keyboard.service
 
+import android.content.Intent
 import android.inputmethodservice.InputMethodService
 import android.os.Handler
 import android.os.Looper
 import android.util.Log
 import android.view.View
 import android.view.LayoutInflater
-import android.view.inputmethod.InputConnection
 import android.widget.Button
 import android.widget.GridLayout
 import android.widget.LinearLayout
+import com.chaquo.python.Python
+import com.chaquo.python.android.AndroidPlatform
+import com.example.keyboard.KeyboardActivity
 import com.example.keyboard.R
 import com.example.keyboard.ml.NextWordPredictor
 
@@ -28,19 +31,57 @@ class SecureKeyboardService : InputMethodService() {
     // Flag to prevent recreating the keyboard on every key press
     private var keyboardInitialized = false
 
+    // Track the last word for adding to history
+    private var lastWord = ""
+    private var wordBoundaryDetected = false
+
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "onCreate")
         try {
+            // Ensure Python is initialized before creating the predictor
+            if (!ensurePythonInitialized()) {
+                // Try to launch the activity to initialize Python
+                launchInitActivity()
+                return
+            }
+
+            // Initialize the Python predictor
             predictor = NextWordPredictor(this)
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing predictor", e)
+            // Try to launch the activity to initialize Python
+            launchInitActivity()
+        }
+    }
+
+    private fun ensurePythonInitialized(): Boolean {
+        return try {
+            if (!Python.isStarted()) {
+                Python.start(AndroidPlatform(this))
+            }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Python initialization failed", e)
+            false
+        }
+    }
+
+    private fun launchInitActivity() {
+        try {
+            val intent = Intent(this, KeyboardActivity::class.java)
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to launch init activity", e)
         }
     }
 
     override fun onDestroy() {
         Log.d(TAG, "onDestroy")
-        predictor.close()
+        if (::predictor.isInitialized) {
+            predictor.close()
+        }
         super.onDestroy()
     }
 
@@ -73,6 +114,8 @@ class SecureKeyboardService : InputMethodService() {
 
         if (!restarting) {
             currentText.clear()
+            lastWord = ""
+            wordBoundaryDetected = false
             // Update suggestions in the next frame to avoid UI freezes
             handler.post { clearSuggestions() }
         }
@@ -80,8 +123,18 @@ class SecureKeyboardService : InputMethodService() {
 
     override fun onFinishInput() {
         Log.d(TAG, "onFinishInput")
+        // Save any pending word to history
+        if (::predictor.isInitialized && lastWord.isNotEmpty()) {
+            predictor.addToHistory(lastWord)
+            lastWord = ""
+        }
+
+        // Update model with accumulated history
+        if (::predictor.isInitialized) {
+            handler.post { updateLocalModel() }
+        }
+
         super.onFinishInput()
-        // Don't clear the keyboard here
     }
 
     // Called when text selection changes
@@ -96,7 +149,9 @@ class SecureKeyboardService : InputMethodService() {
             if (ic != null) {
                 val textBeforeCursor = ic.getTextBeforeCursor(100, 0)?.toString() ?: ""
                 currentText = StringBuilder(textBeforeCursor)
-                handler.post { updateSuggestions() }
+                if (::predictor.isInitialized) {
+                    handler.post { updateSuggestions() }
+                }
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error in onUpdateSelection", e)
@@ -128,8 +183,15 @@ class SecureKeyboardService : InputMethodService() {
                         currentInputConnection?.commitText(word, 1)
                         currentText.append(word)
 
+                        // Save this word to history
+                        if (::predictor.isInitialized) {
+                            predictor.addToHistory(word)
+                        }
+
                         // Update suggestions after selection
-                        handler.post { updateSuggestions() }
+                        if (::predictor.isInitialized) {
+                            handler.post { updateSuggestions() }
+                        }
                     }
                 }
             }
@@ -183,7 +245,9 @@ class SecureKeyboardService : InputMethodService() {
                 // Update current text
                 if (currentText.isNotEmpty()) {
                     currentText.deleteCharAt(currentText.length - 1)
-                    handler.post { updateSuggestions() }
+                    if (::predictor.isInitialized) {
+                        handler.post { updateSuggestions() }
+                    }
                 }
             }
 
@@ -278,8 +342,25 @@ class SecureKeyboardService : InputMethodService() {
             // Update our tracking of the current text
             currentText.append(text)
 
+            // If a word boundary is detected (space, newline, punctuation)
+            if (text == " " || text == "\n" || text.matches(Regex("[.,!?;:]"))) {
+                // Add the last word to history if there is one
+                if (lastWord.isNotEmpty() && ::predictor.isInitialized) {
+                    predictor.addToHistory(lastWord)
+                    lastWord = ""
+                }
+                wordBoundaryDetected = true
+            } else if (wordBoundaryDetected) {
+                // Start a new word
+                lastWord = text
+                wordBoundaryDetected = false
+            } else {
+                // Continue the current word
+                lastWord += text
+            }
+
             // After each keypress, update suggestions on a background thread
-            if (text != "\n") {
+            if (text != "\n" && ::predictor.isInitialized) {
                 handler.post { updateSuggestions() }
             } else {
                 // If enter was pressed, clear current text tracking
@@ -329,8 +410,7 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
-    // Call this method periodically (maybe when keyboard is hidden)
-    // to update the local model with user data
+    // Call this method to update the local model with user data
     private fun updateLocalModel() {
         if (::predictor.isInitialized) {
             predictor.updateLocalModel()
