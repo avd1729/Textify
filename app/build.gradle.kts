@@ -4,6 +4,7 @@ plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
     alias(libs.plugins.kotlin.compose)
+    id("com.chaquo.python")
 }
 
 android {
@@ -18,6 +19,22 @@ android {
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+        ndk {
+            abiFilters += listOf("arm64-v8a", "x86_64")
+        }
+
+        // For Chaquopy with Kotlin DSL
+        chaquopy {
+            defaultConfig {
+                version = "3.11"
+                pip {
+                    install("numpy")
+                    install("pandas")
+                    // Add other packages as needed
+                }
+            }
+        }
     }
 
     buildTypes {
@@ -38,6 +55,16 @@ android {
     }
     buildFeatures {
         compose = true
+    }
+
+    // Source sets configuration for Kotlin DSL
+    sourceSets {
+        getByName("main") {
+            // Using Kotlin DSL property access syntax
+            java.srcDirs("src/main/java")
+            // This is for Python files
+            resources.srcDirs("src/main/python")
+        }
     }
 }
 
