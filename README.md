@@ -3,7 +3,8 @@
 **Textify** is an intelligent, privacy-first Android keyboard app that provides next-word suggestions through a lightweight, locally embedded **n-gram prediction model**. Designed with modern UI principles using **Jetpack Compose** and powered by a **federated learning backend**, Textify adapts to users' writing styles while keeping their data secure on-device.
 
 ---
-
+![image](https://github.com/user-attachments/assets/ad3c6d3e-ba3f-4d55-80ba-b53afe6d61c3)
+---
 ## What Makes Textify Special?
 
 - **On-device Prediction**:  
