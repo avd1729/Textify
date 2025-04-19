@@ -53,7 +53,7 @@ class SecureKeyboardService : InputMethodService() {
 
             predictor = NextWordPredictor(this)
 
-            val serverUrl = "https://zyphor-fl.onrender.com"
+            val serverUrl = "http://54.156.39.207:5000"
 
             // Download the latest aggregated model first, then upload local model
             CoroutineScope(Dispatchers.Main).launch {
