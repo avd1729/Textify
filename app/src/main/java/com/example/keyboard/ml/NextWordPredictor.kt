@@ -223,6 +223,9 @@ class NextWordPredictor(private val context: Context) {
 
     fun exportModel(exportPath: String? = null): String? {
         try {
+            // Ensure vocabulary is exported as a dictionary
+            predictor?.callAttr("prepare_for_export")
+
             val path = predictor?.callAttr("export_for_aggregation", exportPath)?.toString()
             Log.d(TAG, "Exported model to: $path")
             return path
@@ -239,6 +242,69 @@ class NextWordPredictor(private val context: Context) {
             Log.d(TAG, "Model saved before closing")
         } catch (e: Exception) {
             Log.e(TAG, "Error closing Python predictor", e)
+        }
+    }
+
+    /**
+     * Downloads the aggregated model from the server and replaces the local model
+     * @param serverUrl The base URL of the Flask server
+     * @return Success status of the download
+     */
+    suspend fun downloadAggregatedModel(serverUrl: String): Boolean {
+        return withContext(Dispatchers.IO) {
+            try {
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(30, TimeUnit.SECONDS)
+                    .readTimeout(60, TimeUnit.SECONDS)
+                    .build()
+
+                // Build the request
+                val request = Request.Builder()
+                    .url("$serverUrl/download_aggregated_model")
+                    .get()
+                    .build()
+
+                Log.d(TAG, "Requesting aggregated model from server")
+
+                // Execute the request
+                val response = client.newCall(request).execute()
+
+                if (!response.isSuccessful) {
+                    Log.e(TAG, "Failed to download aggregated model: ${response.code}")
+                    return@withContext false
+                }
+
+                // Get the model data
+                val modelBytes = response.body?.bytes() ?: run {
+                    Log.e(TAG, "Empty response body")
+                    return@withContext false
+                }
+
+                // Get the model file path where we should save it
+                val modelPath = context.filesDir.absolutePath + "/keyboard_model.pkl"
+                val file = File(modelPath)
+
+                // Save the downloaded model directly to the expected model path
+                file.writeBytes(modelBytes)
+
+                Log.d(TAG, "Downloaded and saved aggregated model (${modelBytes.size} bytes) to $modelPath")
+
+                // Create a new predictor instance with the updated model
+                try {
+
+                    // Reinitialize Python to load the new model
+                    initializePython()
+
+                    Log.d(TAG, "Successfully reinitialized predictor with new model")
+                    return@withContext true
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error reinitializing predictor: ${e.message}")
+                    return@withContext false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Error downloading aggregated model", e)
+                return@withContext false
+            }
         }
     }
 }

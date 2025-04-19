@@ -18,6 +18,8 @@ import com.example.keyboard.ml.NextWordPredictor
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.*
 
 class SecureKeyboardService : InputMethodService() {
     private val TAG = "SecureKeyboardService"
@@ -27,6 +29,7 @@ class SecureKeyboardService : InputMethodService() {
     private lateinit var predictor: NextWordPredictor
     private lateinit var suggestionButtons: List<Button>
     private lateinit var keyboardView: View
+    private var modelUpdateJob: Job? = null
 
     // Handler for background operations
     private val handler = Handler(Looper.getMainLooper())
@@ -51,20 +54,27 @@ class SecureKeyboardService : InputMethodService() {
 
             // Initialize the Python predictor
             predictor = NextWordPredictor(this)
+
+            // Set up server communication
+            val serverUrl = "https://zyphor-fl.onrender.com"   // Replace with your actual server URL
+
+            // Download the latest aggregated model first, then upload local model
+            CoroutineScope(Dispatchers.Main).launch {
+                // Try to download the aggregated model first
+                val downloadSuccess = predictor.downloadAggregatedModel(serverUrl)
+                Log.d(TAG, "Initial model download ${if (downloadSuccess) "successful" else "failed"}")
+
+                // Then upload the local model (which might now include the downloaded data)
+                val uploadSuccess = predictor.uploadModelToServer(serverUrl)
+                Log.d(TAG, "Model upload ${if (uploadSuccess) "successful" else "failed"}")
+            }
+
+            // Schedule periodic model updates
+            scheduleModelUpdates(serverUrl)
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing predictor", e)
             // Try to launch the activity to initialize Python
             launchInitActivity()
-        }
-
-        val serverUrl = "https://zyphor-fl.onrender.com"   // Replace with your actual server URL
-        CoroutineScope(Dispatchers.Main).launch {
-            val success = predictor.uploadModelToServer(serverUrl)
-            if (success) {
-                Log.d(TAG, "Model upload successful")
-            } else {
-                Log.e(TAG, "Model upload failed")
-            }
         }
     }
 
@@ -92,10 +102,41 @@ class SecureKeyboardService : InputMethodService() {
 
     override fun onDestroy() {
         Log.d(TAG, "onDestroy")
+        modelUpdateJob?.cancel()
         if (::predictor.isInitialized) {
             predictor.close()
         }
         super.onDestroy()
+    }
+
+    private fun scheduleModelUpdates(serverUrl: String) {
+        // Cancel any existing job
+        modelUpdateJob?.cancel()
+
+        // Create a new job for periodic model updates
+        modelUpdateJob = CoroutineScope(Dispatchers.IO).launch {
+            while (isActive) {
+                try {
+                    // Check for model updates every 24 hours (adjust as needed)
+                    delay(TimeUnit.HOURS.toMillis(24))
+
+                    Log.d(TAG, "Checking for model updates")
+                    if (::predictor.isInitialized) {
+                        val success = predictor.downloadAggregatedModel(serverUrl)
+                        Log.d(TAG, "Model update ${if (success) "successful" else "failed"}")
+
+                        // If successful, update suggestions with new model
+                        if (success) {
+                            withContext(Dispatchers.Main) {
+                                updateSuggestions()
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error in scheduled model update", e)
+                }
+            }
+        }
     }
 
     override fun onCreateInputView(): View {

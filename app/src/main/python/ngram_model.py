@@ -150,3 +150,28 @@ class NGramModel:
         model.vocabulary = data['vocabulary']
 
         return model
+
+    def load_model(self, model_path):
+        """
+        Load a model from the given path
+        Returns True if successful, False otherwise
+        """
+        try:
+            # Use the class method you provided to load the model
+            new_model = self.__class__.load(model_path)
+
+            # Copy the loaded model's attributes to this instance
+            self.models = new_model.models
+            self.word_count = new_model.word_count
+            self.total_words = new_model.total_words
+            self.vocabulary = new_model.vocabulary
+            self.n = new_model.n
+            self.smoothing = new_model.smoothing
+
+            print(f"Model loaded successfully from {model_path}")
+            return True
+        except Exception as e:
+            print(f"Error loading model: {e}")
+            import traceback
+            traceback.print_exc()
+            return False

@@ -123,37 +123,50 @@ class KeyboardPredictor:
             print(f"ERROR saving model: {str(e)}")
             print(traceback.format_exc())
 
-    def export_for_aggregation(self, export_path=None):
+    def prepare_for_export(self):
         """
-        Export model for server aggregation
-        This could be enhanced with additional metadata in a real implementation
+        Ensure vocabulary is in a format compatible with the server's aggregation process.
+        """
+        # If vocabulary is a set, convert it to a dict with counts
+        if isinstance(self.model.vocabulary, set):
+            self.model.vocabulary = {word: 1 for word in self.model.vocabulary}
+        return True
+
+    def export_for_aggregation(self, export_path=None):
+        """Export the model in a format suitable for aggregation"""
+        if export_path is None:
+            export_path = self.model_path.replace('.pkl', '_export.pkl')
+
+        # Prepare the model data for export
+        export_data = {
+            'n': self.model.n,
+            'smoothing': self.model.smoothing,
+            'models': {k: dict(v) for k, v in self.model.models.items()},  # Convert defaultdict to dict
+            'word_count': self.model.word_count,
+            'total_words': self.model.total_words,
+            'vocabulary': dict(self.model.vocabulary) if hasattr(self.model.vocabulary, 'items') else {word: 1 for word in self.model.vocabulary}
+        }
+
+        with open(export_path, 'wb') as f:
+            pickle.dump(export_data, f)
+
+        return export_path
+
+    def load_model(self, model_path):
+        """
+        Load a model from the given path
+        Returns True if successful, False otherwise
         """
         try:
-            # If no path provided, use the app's files directory from self.model_path
-            if not export_path:
-                # Extract the directory from the existing model_path
-                base_dir = os.path.dirname(self.model_path)
-                export_path = os.path.join(base_dir, "keyboard_model_export.pkl")
+            print(f"Attempting to load model from {model_path}")
+            self.model = NGramModel.load(model_path)
+            print(f"Model successfully loaded from {model_path}")
+            print(f"Model stats: vocab size={len(self.model.vocabulary)}, total words={self.model.total_words}")
 
-            print(f"Exporting model for aggregation to {export_path}")
-
-            # Ensure directory exists
-            export_dir = os.path.dirname(export_path)
-            if export_dir and not os.path.exists(export_dir):
-                print(f"Creating export directory: {export_dir}")
-                os.makedirs(export_dir, exist_ok=True)
-
-            # Save the model
-            self.model.save(export_path)
-
-            if os.path.exists(export_path):
-                file_size = os.path.getsize(export_path)
-                print(f"Model successfully exported to {export_path} (size: {file_size} bytes)")
-                return export_path
-            else:
-                print(f"WARNING: Exported model file not found at {export_path}")
-                return None
+            # Save to the original model path to ensure it persists
+            self.save_model()
+            return True
         except Exception as e:
-            print(f"ERROR exporting model: {str(e)}")
+            print(f"ERROR loading model: {str(e)}")
             print(traceback.format_exc())
-            return None
+            return False
