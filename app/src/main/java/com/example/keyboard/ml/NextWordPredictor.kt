@@ -1,7 +1,6 @@
 package com.example.keyboard.ml
 
 import android.content.Context
-import android.hardware.usb.UsbDevice.getDeviceId
 import android.util.Log
 import com.chaquo.python.PyObject
 import com.chaquo.python.Python
@@ -37,26 +36,26 @@ class NextWordPredictor(private val context: Context) {
         }
     }
 
+    /**
+     * Initializes the embedded Python interpreter and sets up the KeyboardPredictor instance
+     * with a saved local model.
+     */
     private fun initializePython() {
         try {
-            // Make sure Python is started
             if (!Python.isStarted()) {
                 Python.start(AndroidPlatform(context))
             }
 
-            // Now get the Python instance
             val py = Python.getInstance()
 
-            // Get application's files directory for model storage
             val filesDir = context.filesDir.absolutePath
             val modelPath = "$filesDir/keyboard_model.pkl"
 
-            // Check if we have sample texts to initialize the model
             val assetManager = context.assets
             val sampleTexts = mutableListOf<String>()
 
             try {
-                // Load sample texts from assets if available
+
                 assetManager.list("sample_texts")?.forEach { fileName ->
                     val text = assetManager.open("sample_texts/$fileName").bufferedReader().use { it.readText() }
                     sampleTexts.add(text)
@@ -65,7 +64,6 @@ class NextWordPredictor(private val context: Context) {
                 Log.w(TAG, "Could not load sample texts: ${e.message}")
             }
 
-            // Create KeyboardPredictor instance
             val module = py.getModule("keyboard_predictor")
             predictor = module.callAttr(
                 "KeyboardPredictor",
@@ -77,7 +75,7 @@ class NextWordPredictor(private val context: Context) {
             Log.d(TAG, "Python predictor created with model path: $modelPath")
         } catch (e: Exception) {
             Log.e(TAG, "Error in initializePython", e)
-            throw e  // Re-throw to ensure initialization failure is properly handled
+            throw e
         }
     }
 
@@ -87,7 +85,6 @@ class NextWordPredictor(private val context: Context) {
      * @return Success status of the upload
      */
     suspend fun uploadModelToServer(serverUrl: String): Boolean {
-        // First export the model to the app's files directory
         val exportPath = exportModel(context.filesDir.absolutePath + "/export_model.pkl")
         if (exportPath == null) {
             Log.e(TAG, "Failed to export model for upload")
@@ -104,14 +101,12 @@ class NextWordPredictor(private val context: Context) {
 
                 Log.d(TAG, "Uploading model file, size: ${file.length()} bytes")
 
-                // Create OkHttp client with extended timeouts for large files
                 val client = OkHttpClient.Builder()
                     .connectTimeout(30, TimeUnit.SECONDS)
                     .writeTimeout(60, TimeUnit.SECONDS)
                     .readTimeout(60, TimeUnit.SECONDS)
                     .build()
 
-                // Create multipart request body with the file
                 val requestBody = MultipartBody.Builder()
                     .setType(MultipartBody.FORM)
                     .addFormDataPart(
@@ -119,17 +114,15 @@ class NextWordPredictor(private val context: Context) {
                         file.name,
                         file.asRequestBody("application/octet-stream".toMediaTypeOrNull())
                     )
-                    // Add device ID or user info if needed
+
                     .addFormDataPart("device_id", getDeviceId())
                     .build()
 
-                // Build the request
                 val request = Request.Builder()
                     .url("$serverUrl/upload_model")
                     .post(requestBody)
                     .build()
 
-                // Execute the request
                 val response = client.newCall(request).execute()
                 val success = response.isSuccessful
 
@@ -139,7 +132,6 @@ class NextWordPredictor(private val context: Context) {
                     Log.e(TAG, "Model upload failed: ${response.code} - ${response.body?.string()}")
                 }
 
-                // Clean up the exported file after upload
                 file.delete()
 
                 return@withContext success
@@ -166,16 +158,23 @@ class NextWordPredictor(private val context: Context) {
         return deviceId
     }
 
+    /**
+     * Provides next-word predictions based on the user’s current input.
+     *
+     * @param text The input text string from the keyboard.
+     * @return A list of predicted words (maximum of [maxSuggestions]).
+     *         Returns fallback common words if prediction fails.
+     */
     fun getPredictions(text: String): List<String> {
         val processedText = preprocessText(text)
         Log.d(TAG, "Processing text for predictions: '$processedText'")
 
         try {
-            // Call the Python predict method
+
             val predictions = predictor?.callAttr("predict", processedText, maxSuggestions)
 
             if (predictions != null) {
-                // Convert Python list of (word, probability) tuples to Kotlin list of words
+
                 val result = mutableListOf<String>()
                 val size = predictions.asList().size
 
@@ -192,10 +191,15 @@ class NextWordPredictor(private val context: Context) {
             Log.e(TAG, "Error getting predictions from Python model", e)
         }
 
-        // Fallback to common words if prediction fails
         return fallbackWords.shuffled().take(maxSuggestions)
     }
 
+    /**
+     * Cleans up the input text by removing punctuation and lowercasing.
+     *
+     * @param text Raw user input.
+     * @return Preprocessed text string.
+     */
     private fun preprocessText(text: String): String {
         return text.lowercase(Locale.getDefault())
             .replace(Regex("[^\\w\\s']"), " ")
@@ -203,6 +207,12 @@ class NextWordPredictor(private val context: Context) {
             .trim()
     }
 
+    /**
+     * Adds the current input text to the user’s local typing history.
+     * This history is used later for local model training.
+     *
+     * @param text The string to store in the history.
+     */
     fun addToHistory(text: String) {
         try {
             predictor?.callAttr("add_to_history", text)
@@ -212,6 +222,10 @@ class NextWordPredictor(private val context: Context) {
         }
     }
 
+    /**
+     * Triggers local training using the accumulated user history.
+     * This updates the model with personalized data.
+     */
     fun updateLocalModel() {
         try {
             predictor?.callAttr("train_on_history")
@@ -221,9 +235,14 @@ class NextWordPredictor(private val context: Context) {
         }
     }
 
+    /**
+     * Prepares the model for server upload and saves it to disk.
+     *
+     * @param exportPath Optional custom export path (defaults to internal storage).
+     * @return The path where the exported model is saved, or null if failed.
+     */
     fun exportModel(exportPath: String? = null): String? {
         try {
-            // Ensure vocabulary is exported as a dictionary
             predictor?.callAttr("prepare_for_export")
 
             val path = predictor?.callAttr("export_for_aggregation", exportPath)?.toString()
@@ -235,9 +254,12 @@ class NextWordPredictor(private val context: Context) {
         }
     }
 
+    /**
+     * Saves the current model state before the object is destroyed.
+     * Recommended to call this on app shutdown or user logout.
+     */
     fun close() {
         try {
-            // Save the model before closing
             predictor?.callAttr("save_model")
             Log.d(TAG, "Model saved before closing")
         } catch (e: Exception) {
@@ -258,7 +280,6 @@ class NextWordPredictor(private val context: Context) {
                     .readTimeout(60, TimeUnit.SECONDS)
                     .build()
 
-                // Build the request
                 val request = Request.Builder()
                     .url("$serverUrl/download_aggregated_model")
                     .get()
@@ -266,7 +287,6 @@ class NextWordPredictor(private val context: Context) {
 
                 Log.d(TAG, "Requesting aggregated model from server")
 
-                // Execute the request
                 val response = client.newCall(request).execute()
 
                 if (!response.isSuccessful) {
@@ -274,24 +294,19 @@ class NextWordPredictor(private val context: Context) {
                     return@withContext false
                 }
 
-                // Get the model data
                 val modelBytes = response.body?.bytes() ?: run {
                     Log.e(TAG, "Empty response body")
                     return@withContext false
                 }
 
-                // Get the model file path where we should save it
                 val modelPath = context.filesDir.absolutePath + "/keyboard_model.pkl"
                 val file = File(modelPath)
 
-                // Save the downloaded model directly to the expected model path
                 file.writeBytes(modelBytes)
 
                 Log.d(TAG, "Downloaded and saved aggregated model (${modelBytes.size} bytes) to $modelPath")
 
-                // Create a new predictor instance with the updated model
                 try {
-
                     // Reinitialize Python to load the new model
                     initializePython()
 

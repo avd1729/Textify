@@ -31,32 +31,29 @@ class SecureKeyboardService : InputMethodService() {
     private lateinit var keyboardView: View
     private var modelUpdateJob: Job? = null
 
-    // Handler for background operations
     private val handler = Handler(Looper.getMainLooper())
 
-    // Flag to prevent recreating the keyboard on every key press
     private var keyboardInitialized = false
 
-    // Track the last word for adding to history
     private var lastWord = ""
     private var wordBoundaryDetected = false
 
+    /**
+     * Initializes the keyboard service and prediction model.
+     * Sets up federated learning by downloading the latest aggregated model and uploading local model.
+     */
     override fun onCreate() {
         super.onCreate()
         Log.d(TAG, "onCreate")
         try {
-            // Ensure Python is initialized before creating the predictor
             if (!ensurePythonInitialized()) {
-                // Try to launch the activity to initialize Python
                 launchInitActivity()
                 return
             }
 
-            // Initialize the Python predictor
             predictor = NextWordPredictor(this)
 
-            // Set up server communication
-            val serverUrl = "https://zyphor-fl.onrender.com"   // Replace with your actual server URL
+            val serverUrl = "https://zyphor-fl.onrender.com"
 
             // Download the latest aggregated model first, then upload local model
             CoroutineScope(Dispatchers.Main).launch {
@@ -73,11 +70,14 @@ class SecureKeyboardService : InputMethodService() {
             scheduleModelUpdates(serverUrl)
         } catch (e: Exception) {
             Log.e(TAG, "Error initializing predictor", e)
-            // Try to launch the activity to initialize Python
             launchInitActivity()
         }
     }
 
+    /**
+     * Ensures Python is initialized for prediction model usage.
+     * @return Boolean indicating if Python was successfully initialized.
+     */
     private fun ensurePythonInitialized(): Boolean {
         return try {
             if (!Python.isStarted()) {
@@ -90,6 +90,10 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
+    /**
+     * Launches the initialization activity in case Python is not initialized.
+     * Displays an error if initialization fails.
+     */
     private fun launchInitActivity() {
         try {
             val intent = Intent(this, KeyboardActivity::class.java)
@@ -109,6 +113,10 @@ class SecureKeyboardService : InputMethodService() {
         super.onDestroy()
     }
 
+    /**
+     * Schedules periodic updates for the model from the server.
+     * @param serverUrl The server URL where models are updated from.
+     */
     private fun scheduleModelUpdates(serverUrl: String) {
         // Cancel any existing job
         modelUpdateJob?.cancel()
@@ -117,7 +125,7 @@ class SecureKeyboardService : InputMethodService() {
         modelUpdateJob = CoroutineScope(Dispatchers.IO).launch {
             while (isActive) {
                 try {
-                    // Check for model updates every 24 hours (adjust as needed)
+                    // Check for model updates every 24 hours
                     delay(TimeUnit.HOURS.toMillis(24))
 
                     Log.d(TAG, "Checking for model updates")
@@ -139,9 +147,12 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
+    /**
+     * Creates and returns the keyboard view when the input method is displayed.
+     * @return The keyboard view to be displayed.
+     */
     override fun onCreateInputView(): View {
         Log.d(TAG, "onCreateInputView")
-        // Only inflate the layout if we haven't already
         if (!::keyboardView.isInitialized) {
             keyboardView = LayoutInflater.from(this).inflate(R.layout.keyboard_layout, null)
             initializeKeyboard()
@@ -149,6 +160,10 @@ class SecureKeyboardService : InputMethodService() {
         return keyboardView
     }
 
+    /**
+     * Initializes the keyboard layout and suggestion bar if not already initialized.
+     * Sets up the keyboard UI components.
+     */
     private fun initializeKeyboard() {
         Log.d(TAG, "initializeKeyboard")
         if (keyboardInitialized) return
@@ -162,6 +177,12 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
+    /**
+     * Called when the input editing session starts.
+     * Resets text buffers and suggestions when not restarting.
+     * @param attribute The attributes of the edit field being edited
+     * @param restarting Whether we are restarting input on the same text field
+     */
     override fun onStartInput(attribute: android.view.inputmethod.EditorInfo?, restarting: Boolean) {
         super.onStartInput(attribute, restarting)
         Log.d(TAG, "onStartInput: restarting=$restarting")
@@ -170,20 +191,21 @@ class SecureKeyboardService : InputMethodService() {
             currentText.clear()
             lastWord = ""
             wordBoundaryDetected = false
-            // Update suggestions in the next frame to avoid UI freezes
             handler.post { clearSuggestions() }
         }
     }
 
+    /**
+     * Called when the input editing session is completed.
+     * Adds the last word to history and updates the local model.
+     */
     override fun onFinishInput() {
         Log.d(TAG, "onFinishInput")
-        // Save any pending word to history
         if (::predictor.isInitialized && lastWord.isNotEmpty()) {
             predictor.addToHistory(lastWord)
             lastWord = ""
         }
 
-        // Update model with accumulated history
         if (::predictor.isInitialized) {
             handler.post { updateLocalModel() }
         }
@@ -191,13 +213,15 @@ class SecureKeyboardService : InputMethodService() {
         super.onFinishInput()
     }
 
-    // Called when text selection changes
+    /**
+     * Called when the text selection changes in the editing field.
+     * Updates current text state and refreshes suggestions.
+     */
     override fun onUpdateSelection(oldSelStart: Int, oldSelEnd: Int, newSelStart: Int,
                                    newSelEnd: Int, candidatesStart: Int, candidatesEnd: Int) {
         super.onUpdateSelection(oldSelStart, oldSelEnd, newSelStart, newSelEnd, candidatesStart, candidatesEnd)
         Log.d(TAG, "onUpdateSelection: newSelStart=$newSelStart newSelEnd=$newSelEnd")
 
-        // Extract current text to keep prediction context accurate
         try {
             val ic = currentInputConnection
             if (ic != null) {
@@ -212,6 +236,11 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
+    /**
+     * Sets up the suggestion bar with word prediction buttons.
+     * Configures click listeners for each suggestion button.
+     * @param view The root keyboard view
+     */
     private fun setupSuggestionBar(view: View) {
         Log.d(TAG, "setupSuggestionBar")
         try {
@@ -222,27 +251,22 @@ class SecureKeyboardService : InputMethodService() {
                 view.findViewById(R.id.suggestion_3)
             )
 
-            // Set up click listeners for suggestion buttons
             suggestionButtons.forEach { button ->
                 button.setOnClickListener {
                     val word = button.text.toString()
                     if (word.isNotEmpty()) {
-                        // Add space if needed
                         if (currentText.isNotEmpty() && currentText.last() != ' ') {
                             currentInputConnection?.commitText(" ", 1)
                             currentText.append(" ")
                         }
 
-                        // Insert the suggested word
                         currentInputConnection?.commitText(word, 1)
                         currentText.append(word)
 
-                        // Save this word to history
                         if (::predictor.isInitialized) {
                             predictor.addToHistory(word)
                         }
 
-                        // Update suggestions after selection
                         if (::predictor.isInitialized) {
                             handler.post { updateSuggestions() }
                         }
@@ -254,12 +278,16 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
+    /**
+     * Sets up the main keyboard layout with appropriate key set.
+     * Configures special keys (space, shift, symbols, backspace, enter).
+     * @param view The root keyboard view
+     */
     private fun setupKeyboard(view: View) {
         Log.d(TAG, "setupKeyboard")
         try {
             val keyboardContainer: GridLayout = view.findViewById(R.id.keyboard_container)
 
-            // Clear any existing views
             keyboardContainer.removeAllViews()
 
             if (isSymbolsEnabled) {
@@ -268,35 +296,29 @@ class SecureKeyboardService : InputMethodService() {
                 setupAlphaKeyboard(keyboardContainer)
             }
 
-            // Space button logic
             val spaceButton: Button = view.findViewById(R.id.button_space)
             spaceButton.setOnClickListener {
                 handleKeyPress(" ")
             }
 
-            // Shift button logic
             val shiftButton: Button = view.findViewById(R.id.button_shift)
             shiftButton.setOnClickListener {
                 isShiftEnabled = !isShiftEnabled
                 updateKeyLabels(keyboardContainer)
             }
 
-            // Symbols button logic
             val symbolsButton: Button = view.findViewById(R.id.button_symbols)
             symbolsButton.setOnClickListener {
                 isSymbolsEnabled = !isSymbolsEnabled
                 setupKeyboard(view)
 
-                // Update the symbol button text
                 symbolsButton.text = if (isSymbolsEnabled) "ABC" else "\\?123"
             }
 
-            // Backspace button logic
             val backspaceButton: Button = view.findViewById(R.id.button_backspace)
             backspaceButton.setOnClickListener {
                 currentInputConnection?.deleteSurroundingText(1, 0)
 
-                // Update current text
                 if (currentText.isNotEmpty()) {
                     currentText.deleteCharAt(currentText.length - 1)
                     if (::predictor.isInitialized) {
@@ -305,7 +327,6 @@ class SecureKeyboardService : InputMethodService() {
                 }
             }
 
-            // Enter button logic
             val enterButton: Button = view.findViewById(R.id.button_enter)
             enterButton.setOnClickListener {
                 handleKeyPress("\n")
@@ -315,6 +336,10 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
+    /**
+     * Creates and configures the alphabetic keyboard layout.
+     * @param keyboardContainer The container to add key buttons to
+     */
     private fun setupAlphaKeyboard(keyboardContainer: GridLayout) {
         val keys = listOf(
             "q", "w", "e", "r", "t", "y", "u", "i", "o", "p",
@@ -328,6 +353,10 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
+    /**
+     * Creates and configures the symbols keyboard layout.
+     * @param keyboardContainer The container to add symbol buttons to
+     */
     private fun setupSymbolKeyboard(keyboardContainer: GridLayout) {
         val symbols = listOf(
             "1", "2", "3", "4", "5", "6", "7", "8", "9", "0",
@@ -341,6 +370,12 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
+    /**
+     * Creates a keyboard button with the specified text and styling.
+     * @param context The context used to create the button
+     * @param text The text to display on the button
+     * @return A styled button ready to be added to the keyboard
+     */
     private fun createKeyButton(context: android.content.Context, text: String): Button {
         return Button(context).apply {
             this.text = if (isShiftEnabled && !isSymbolsEnabled) text.uppercase() else text
@@ -348,7 +383,6 @@ class SecureKeyboardService : InputMethodService() {
             setTextColor(android.graphics.Color.WHITE)
             setBackgroundResource(R.drawable.key_background)
 
-            // Set layout params for consistent key size
             val params = GridLayout.LayoutParams()
             params.width = 0
             params.height = android.view.ViewGroup.LayoutParams.WRAP_CONTENT
@@ -369,6 +403,11 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
+    /**
+     * Updates the letter case on keyboard keys based on shift state.
+     * Only affects alphabet keys when in alphabet mode.
+     * @param keyboardContainer The container holding the key buttons
+     */
     private fun updateKeyLabels(keyboardContainer: GridLayout) {
         try {
             // Only update if we're in alphabet mode
@@ -388,6 +427,11 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
+    /**
+     * Handles key press events for text input.
+     * Updates current text state, tracks word boundaries, and refreshes suggestions.
+     * @param text The text to be inserted
+     */
     private fun handleKeyPress(text: String) {
         try {
             val inputConnection = currentInputConnection
@@ -426,14 +470,16 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
+    /**
+     * Updates the suggestion buttons with predicted words.
+     * Gets predictions from the model based on current text context.
+     */
     private fun updateSuggestions() {
         try {
             if (!::predictor.isInitialized) return
 
-            // Get predictions based on current text
             val predictions = predictor.getPredictions(currentText.toString())
 
-            // Update suggestion buttons if they're initialized
             if (::suggestionButtons.isInitialized) {
                 for (i in suggestionButtons.indices) {
                     val button = suggestionButtons[i]
@@ -451,6 +497,10 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
+    /**
+     * Clears all word suggestions from the suggestion bar.
+     * Hides suggestion buttons when no predictions are available.
+     */
     private fun clearSuggestions() {
         try {
             if (::suggestionButtons.isInitialized) {
@@ -464,7 +514,10 @@ class SecureKeyboardService : InputMethodService() {
         }
     }
 
-    // Call this method to update the local model with user data
+    /**
+     * Updates the local prediction model with new learning data.
+     * Should be called after input sessions to improve predictions.
+     */
     private fun updateLocalModel() {
         if (::predictor.isInitialized) {
             predictor.updateLocalModel()
