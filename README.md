@@ -60,6 +60,9 @@ Textify aims to combine usability, intelligence, and privacy in a seamless typin
 - Real-time insights into local vs global model improvements.
 - Periodic background syncs to minimize battery and bandwidth impact.
 
+## Reference
+
+https://drive.google.com/file/d/1i19kHE2Miab6xJYqH5M68g-4uINtBCcR/view?usp=sharing
 ---
 
 ## Summary
