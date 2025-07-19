@@ -65,6 +65,11 @@ Textify aims to combine usability, intelligence, and privacy in a seamless typin
 https://drive.google.com/file/d/1i19kHE2Miab6xJYqH5M68g-4uINtBCcR/view?usp=sharing
 ---
 
+## APK File
+
+https://drive.google.com/file/d/1O3eGWtHXl8OzUcp2m2jfUAjj6pThbu4j/view?usp=drive_link
+---
+
 ## Summary
 
 **Textify** is not just a keyboard — it’s a smarter, privacy-conscious writing assistant. By blending lightweight NLP techniques with federated learning and modern Android design, it brings intelligent text prediction to mobile devices without ever sacrificing user trust.
